@@ -1,0 +1,20 @@
+[[bin]]
+name = "test"
+path = "src/test.rs"
+
+[package]
+name = "colink-server"
+version = "0.2.9"
+edition = "2021"
+
+[dependencies]
+halo2_proofs= {version="0.3.0",features=["dev-graph"]}
+group = "0.13.0"
+plotters ="0.3.4"
+secp256k1 = { version = "0.25", features = ["rand-std", "recovery"] }
+sha2 = "0.10"
+
+
+[build-dependencies]
+prost-build = "0.10"
+tonic-build = "0.7"
