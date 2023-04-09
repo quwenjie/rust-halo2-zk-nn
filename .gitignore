@@ -12,3 +12,5 @@ Cargo.lock
 *.png
 /dataset/
 ck.pt
+*.dat
+*.pic

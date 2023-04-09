@@ -49,7 +49,7 @@ test_loader = DataLoader(
     shuffle=True
 )
 
-
+"""
 model = CNN().to(device)
 optim = torch.optim.Adam(model.parameters(), 1e-3)
 lossf = nn.CrossEntropyLoss()
@@ -80,10 +80,8 @@ with torch.no_grad():
 loss = loss.item()/len(test_loader)
 acc = correct.item()/total
 print(acc)
-
-
 torch.save(model.state_dict(),"ck.pt")
-
+"""
 
 
 model=CNN()
@@ -92,27 +90,20 @@ model.load_state_dict(torch.load("ck.pt"))
 model.qconfig = torch.quantization.get_default_qconfig('qnnpack')
 
 model_fp32_prepared = torch.quantization.prepare(model)
-ANS=pickle.load(open("1.pic",'rb'))
-input_fp32=torch.cat(ANS,dim=0)
+
+
+total = 0
+correct = 0
+
+
+input_fp32=pickle.load(open("1.pic",'rb'))
+
 
 model_fp32_prepared(input_fp32)
 
 model_int8 = torch.quantization.convert(model_fp32_prepared)
 
 uint8_np_ndarray = torch.int_repr(model_int8.conv1.weight()).numpy()
-
-total = 0
-correct = 0
-
-
-
-
-for data, targets in test_loader:
-    data = data.cpu()
-    break
-
-
-
 
 
 IMAGE_WIDTH=28
@@ -125,7 +116,29 @@ conv2_intw=torch.int_repr(model_int8.conv2.weight()).numpy()
 fc_intw=torch.int_repr(model_int8.fc.weight()).numpy()
 fc_intw=np.transpose(fc_intw)  # 320,10
 
+def save_conv_kernel(conv_w,file):
+    fi=open(file,"wb")
+    OUT,IN,K,_=conv_w.shape 
+    for i in range(OUT):
+        for j in range(IN):
+            for k in range(K):
+                for p in range(K):
+                    w=conv_w[i][j][k][p].item()
+                    fi.write(w.to_bytes(4,'little',signed=True))
+    fi.close()
 
+def save_linear_kernel(w,file):
+    fi=open(file,"wb")
+    OUT,IN=w.shape 
+    for i in range(OUT):
+        for j in range(IN):
+            fi.write(w[i][j].item().to_bytes(4,'little',signed=True))
+    fi.close()
+
+
+save_conv_kernel(conv1_intw,"conv1.dat")
+save_conv_kernel(conv2_intw,"conv2.dat")
+save_linear_kernel(fc_intw,"fc1.dat")
 
 def conv_kernel(data,conv_w,STRIDE): 
     OUTPUT_C,INPUT_C,K,_=conv_w.shape
@@ -141,7 +154,7 @@ def conv_kernel(data,conv_w,STRIDE):
                             output[output_c][x][y]+=data[input_c][x*STRIDE+p][y*STRIDE+q]*conv_w[output_c][input_c][p][q]
     return output
 
-    
+
 def linear_kernel(data,l_w):
     BATCH, DIM=data.shape
     DIM, OUT=l_w.shape
@@ -160,9 +173,24 @@ S2=1024
 
 CNT=0
 TOT=0
+for data, targets in test_loader:
+    data = data.cpu()
+    break
+
+def save_img(img,file):
+    fi=open(file,"wb")
+    C,H,W=img.shape 
+    for c in range(C):
+        for i in range(H):
+            for j in range(W):
+                fi.write(int(img[c][i][j].item()).to_bytes(4,'little',signed=True))
+    fi.close()
+
 for id in range(len(data)):
     dt=data[id].numpy()
     dt=np.floor(dt*64)
+    save_img(dt,"img.dat")
+    break
     output=conv_kernel(dt,conv1_intw,2)
     act1_after_relu=scale_then_clip(output,S1)
     output2=conv_kernel(act1_after_relu,conv2_intw,2)
@@ -171,7 +199,7 @@ for id in range(len(data)):
     out=linear_kernel(after_reshape,fc_intw)
     TOT+=1
     print(out[0].argmax(),targets[id])
-    break
+    #break
     if out[0].argmax()==targets[id]:
         CNT+=1
     if TOT%20==0:
