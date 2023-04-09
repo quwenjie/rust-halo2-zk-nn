@@ -64,8 +64,8 @@ impl<F: FieldExt> LinearConfig<F> {
             let value = val1 * val2 - out;
             let mut range_check = |range: usize, value: Expression<F>| {
                 (1..range).fold(value.clone(), |expr, i| {
-                    let val1 = meta.query_advice(advice[0], Rotation::cur());
-                    let val2 = meta.query_advice(advice[0], Rotation::next());
+                    let val1 = meta.query_advice(advice[i], Rotation::cur());
+                    let val2 = meta.query_advice(advice[i], Rotation::next());
                     expr + val1 * val2
                 })
             };
@@ -107,20 +107,20 @@ impl<F: FieldExt> LinearConfig<F> {
                     let dt = data[data_layout[i]];
                     region.assign_advice(
                         || "value",
-                        self.advice[i-start],
+                        self.advice[i - start],
                         offset,
                         || convert_to_Value(wt),
                     );
                     region.assign_advice(
                         || "value2",
-                        self.advice[i-start],
+                        self.advice[i - start],
                         offset + 1,
                         || convert_to_Value(dt),
                     );
                     ans += weight[weight_layout[i]] * data[data_layout[i]];
                 }
 
-                for i in end - start..149 {
+                for i in end - start..150 {
                     region.assign_advice(
                         || "value",
                         self.advice[i],
@@ -312,8 +312,8 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
                     w_layout,
                     dt,
                     conv1,
-                    i*25,
-                    i*25+25,
+                    i * 25,
+                    i * 25 + 25,
                 );
         }
         Ok(())
