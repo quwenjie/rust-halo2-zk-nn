@@ -6,35 +6,23 @@ use halo2_proofs::{
 };
 use std::marker::PhantomData;
 mod table;
-use secp256k1::ffi::SECP256K1_SER_UNCOMPRESSED;
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read};
 use table::*;
 
-/// This helper checks that the value witnessed in a given cell is within a given range.
-/// Depending on the range, this helper uses either a range-check expression (for small ranges),
-/// or a lookup (for large ranges).
-///
-///        value     |    q_range_check    |   q_lookup  |  table_value  |
-///       ----------------------------------------------------------------
-///          v_0     |         1           |      0      |       0       |
-///          v_1     |         0           |      1      |       1       |
-///
-
 #[derive(Debug, Clone)]
-/// A range-constrained value in the circuit produced by the RangeCheckConfig.
 struct RangeConstrained<F: FieldExt, const RANGE: usize>(AssignedCell<Assigned<F>, F>);
 
 #[derive(Clone, Debug)]
 struct LinearConfig<F: FieldExt> {
     advice: [Column<Advice>; 200],
-    s_add: Selector,
+    s_linear: Selector,
     _marker: PhantomData<F>,
 }
 
 #[derive(Debug, Clone)]
-struct RangeCheckConfig<F: FieldExt, const LOOKUP_RANGE: usize> {
-    q_lookup: Selector,
+struct NonLinearConfig<F: FieldExt, const LOOKUP_RANGE: usize> {
+    s_lookup: Selector,
     col1: Column<Advice>,
     col2: Column<Advice>,
     table: RangeTableConfig<F, LOOKUP_RANGE>,
@@ -45,12 +33,10 @@ impl<F: FieldExt> LinearConfig<F> {
         for column in &advice {
             meta.enable_equality(*column);
         }
-        let s_add = meta.selector();
-
-        // Define our multiplication gate!
-        meta.create_gate("mul", |meta| {
+        let s_linear = meta.selector();
+        meta.create_gate("linear", |meta| {
             let range = 150;
-            let s_add = meta.query_selector(s_add);
+            let s_linear = meta.query_selector(s_linear);
             let val1 = meta.query_advice(advice[0], Rotation::cur());
             let val2 = meta.query_advice(advice[0], Rotation::next());
             let out = meta.query_advice(advice[150], Rotation::cur());
@@ -63,12 +49,12 @@ impl<F: FieldExt> LinearConfig<F> {
                 })
             };
 
-            Constraints::with_selector(s_add, [("range check", range_check(150, value))])
+            Constraints::with_selector(s_linear, [("range check", range_check(150, value))])
         });
 
         Self {
             advice,
-            s_add,
+            s_linear,
             _marker: PhantomData,
         }
     }
@@ -91,8 +77,7 @@ impl<F: FieldExt> LinearConfig<F> {
             || "Assign value for lookup range check",
             |mut region| {
                 let offset = 0;
-                // Enable q_lookup
-                self.s_add.enable(&mut region, offset)?;
+                self.s_linear.enable(&mut region, offset)?;
                 // Assign value
                 let mut ans = 0;
                 for i in start..end {
@@ -138,26 +123,26 @@ impl<F: FieldExt> LinearConfig<F> {
         )
     }
 }
-impl<F: FieldExt, const LOOKUP_RANGE: usize> RangeCheckConfig<F, LOOKUP_RANGE> {
+impl<F: FieldExt, const LOOKUP_RANGE: usize> NonLinearConfig<F, LOOKUP_RANGE> {
     pub fn configure(
         meta: &mut ConstraintSystem<F>,
         col1: Column<Advice>,
         col2: Column<Advice>,
     ) -> Self {
-        let q_lookup = meta.complex_selector();
+        let s_lookup = meta.complex_selector();
         let table = RangeTableConfig::configure(meta);
         meta.lookup(|meta| {
-            let q_lookup = meta.query_selector(q_lookup);
+            let s_lookup = meta.query_selector(s_lookup);
             let value1 = meta.query_advice(col1, Rotation::cur());
             let value2 = meta.query_advice(col2, Rotation::cur());
             vec![
-                (q_lookup.clone() * value1, table.lookup1),
-                (q_lookup * value2, table.lookup2),
+                (s_lookup.clone() * value1, table.lookup1),
+                (s_lookup * value2, table.lookup2),
             ]
         });
 
         Self {
-            q_lookup: q_lookup,
+            s_lookup: s_lookup,
             col1: col1,
             col2: col2,
             table: table,
@@ -174,8 +159,8 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> RangeCheckConfig<F, LOOKUP_RANGE> {
         layouter.assign_region(
             || "Assign value for lookup range check",
             |mut region| {
-                // Enable q_lookup
-                self.q_lookup.enable(&mut region, offset)?;
+                // Enable s_lookup
+                self.s_lookup.enable(&mut region, offset)?;
                 // Assign value
                 region.assign_advice(|| "value", self.col1, offset, || value);
                 region
@@ -204,7 +189,7 @@ struct CircuitConfig<F: FieldExt, const LOOKUP_RANGE: usize> {
     /// These are also the columns through which we communicate with other parts of
     /// the circuit.
     advice: [Column<Advice>; 200],
-    nonlinear_config: RangeCheckConfig<F, LOOKUP_RANGE>,
+    nonlinear_config: NonLinearConfig<F, LOOKUP_RANGE>,
     linear_config: LinearConfig<F>,
 }
 
@@ -231,8 +216,7 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
         for i in 0..200 {
             meta.enable_equality(advice[i]);
         }
-        let nonlinear_config =
-            RangeCheckConfig::<F, LOOKUP_RANGE>::configure(meta, advice[0], advice[1]);
+        let nonlinear_config =NonLinearConfig::<F, LOOKUP_RANGE>::configure(meta, advice[0], advice[1]);
         let linear_config = LinearConfig::<F>::configure_linear(meta, advice);
         Self::Config {
             nonlinear_config,
@@ -247,6 +231,8 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
         config.nonlinear_config.table.load(&mut layouter)?;
+        const A:i32=1;
+        const B:i32=1024;
         const IMAGE_SIZE: usize = 28;
         const K_SIZE: usize = 5;
         const C1_CHANNEL: usize = 5;
@@ -287,7 +273,7 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
             output1[i] = ans;
         }
         for i in 0..STEP1 {
-            output2[i] = relu(output1[i] / 1024);
+            output2[i] = relu(output1[i]*A / B);
             config.nonlinear_config.assign_lookup(
                 layouter.namespace(|| "Assign lookup value map"),
                 convert_to_Value(output1[i]),
