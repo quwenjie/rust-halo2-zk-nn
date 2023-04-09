@@ -8,12 +8,12 @@ version = "0.2.9"
 edition = "2021"
 
 [dependencies]
-halo2_proofs= {version="0.3.0",features=["dev-graph"]}
+halo2_proofs = { git = "https://github.com/zcash/halo2.git", rev = "a898d65ae3ad3d41987666f6a03cfc15edae01c4"}
 group = "0.13.0"
 plotters ="0.3.4"
 secp256k1 = { version = "0.25", features = ["rand-std", "recovery"] }
 sha2 = "0.10"
-
+rand_core="0.6.4"
 
 [build-dependencies]
 prost-build = "0.10"
