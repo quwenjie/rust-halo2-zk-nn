@@ -164,8 +164,9 @@ def linear_kernel(data,l_w):
             for _in in range(DIM):
                 output[b][out]+=data[b][_in]*l_w[_in][out]
     return output
+    
 def scale_then_clip(data,s):
-    act_after_scale=np.ceil(data/s)
+    act_after_scale=np.floor(data/s)
     act_after_relu=np.clip(act_after_scale,0,63)
     return act_after_relu
 S1=1024
@@ -192,14 +193,19 @@ def gen_conv_kernel_layout(data,conv_w,STRIDE,file):
     C,IMAGE_WIDTH,_=data.shape
     LAYER_WIDTH= (IMAGE_WIDTH-K+1)//STRIDE
     output=np.zeros((OUTPUT_C,LAYER_WIDTH,LAYER_WIDTH))
+    IDX=-1
     for output_c in range(OUTPUT_C):
         for x in range(LAYER_WIDTH):
             for y in range(LAYER_WIDTH):
+                IDX+=1
                 for input_c in range(INPUT_C):
                     for p in range(K):
                         for q in range(K):
+                            
                             dt_idx= input_c*IMAGE_WIDTH*IMAGE_WIDTH+  (x*STRIDE+p)*IMAGE_WIDTH+y*STRIDE+q
                             conv_idx=output_c*INPUT_C*K*K+input_c*K*K+p*K+q 
+                            if IDX==130:
+                                print(data[input_c][x*STRIDE+p][y*STRIDE+q],conv_w[output_c][input_c][p][q],"dt idx:",dt_idx,"conv idx",conv_idx)
                             fi.write(dt_idx.to_bytes(4,'little',signed=True))
                             fi.write(conv_idx.to_bytes(4,'little',signed=True))
     return
@@ -224,7 +230,6 @@ for id in range(len(data)):
     save_img(dt,"img.dat")
     output=conv_kernel(dt,conv1_intw,2)
     gen_conv_kernel_layout(dt,conv1_intw,2,"conv1.layout")
-    print(output[4][3][2])
     act1_after_relu=scale_then_clip(output,S1)
     output2=conv_kernel(act1_after_relu,conv2_intw,2)
     gen_conv_kernel_layout(act1_after_relu,conv2_intw,2,"conv2.layout")
@@ -232,9 +237,6 @@ for id in range(len(data)):
     after_reshape=np.reshape(act2_after_relu,[1,160])
     out=linear_kernel(after_reshape,fc_intw)
     gen_linear_kernel_layout(after_reshape,fc_intw,"fc1.layout")
-    TOT+=1
-    print(out[0].argmax(),targets[id])
-    break
     if out[0].argmax()==targets[id]:
         CNT+=1
     if TOT%20==0:

@@ -26,15 +26,16 @@ pub fn relu(input: i32)->i32
         input
     }
 }
+
 /// A lookup table of values from 0..RANGE.
 #[derive(Debug, Clone)]
-pub(super) struct RangeTableConfig<F: FieldExt, const RANGE: usize> {
+pub(super) struct NonLinearTableConfig<F: FieldExt> {
     pub(super) lookup1: TableColumn,
     pub(super) lookup2: TableColumn,
     _marker: PhantomData<F>,
 }
 
-impl<F: FieldExt, const RANGE: usize> RangeTableConfig<F, RANGE> {
+impl<F: FieldExt> NonLinearTableConfig<F> {
     pub(super) fn configure(meta: &mut ConstraintSystem<F>) -> Self {
         let lookup1 = meta.lookup_table_column();
         let lookup2 = meta.lookup_table_column();
