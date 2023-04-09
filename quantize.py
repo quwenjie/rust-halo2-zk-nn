@@ -46,7 +46,7 @@ test_file = datasets.MNIST(
 test_loader = DataLoader(
     dataset=test_file,
     batch_size=1024,
-    shuffle=True
+    shuffle=False
 )
 
 """
@@ -186,20 +186,55 @@ def save_img(img,file):
                 fi.write(int(img[c][i][j].item()).to_bytes(4,'little',signed=True))
     fi.close()
 
+def gen_conv_kernel_layout(data,conv_w,STRIDE,file): 
+    fi=open(file,"wb")
+    OUTPUT_C,INPUT_C,K,_=conv_w.shape
+    C,IMAGE_WIDTH,_=data.shape
+    LAYER_WIDTH= (IMAGE_WIDTH-K+1)//STRIDE
+    output=np.zeros((OUTPUT_C,LAYER_WIDTH,LAYER_WIDTH))
+    for output_c in range(OUTPUT_C):
+        for x in range(LAYER_WIDTH):
+            for y in range(LAYER_WIDTH):
+                for input_c in range(INPUT_C):
+                    for p in range(K):
+                        for q in range(K):
+                            dt_idx= input_c*IMAGE_WIDTH*IMAGE_WIDTH+  (x*STRIDE+p)*IMAGE_WIDTH+y*STRIDE+q
+                            conv_idx=output_c*INPUT_C*K*K+input_c*K*K+p*K+q 
+                            fi.write(dt_idx.to_bytes(4,'little',signed=True))
+                            fi.write(conv_idx.to_bytes(4,'little',signed=True))
+    return
+
+def gen_linear_kernel_layout(data,l_w,file):
+    fi=open(file,"wb")
+    BATCH, DIM=data.shape
+    DIM, OUT=l_w.shape
+    output=np.zeros((BATCH, OUT))
+    for b in range(BATCH):
+        for out in range(OUT):
+            for _in in range(DIM):
+                dt_idx=b*DIM+_in
+                l_idx=_in*OUT+out
+                fi.write(dt_idx.to_bytes(4,'little',signed=True))
+                fi.write(l_idx.to_bytes(4,'little',signed=True))
+
+
 for id in range(len(data)):
     dt=data[id].numpy()
     dt=np.floor(dt*64)
     save_img(dt,"img.dat")
-    break
     output=conv_kernel(dt,conv1_intw,2)
+    gen_conv_kernel_layout(dt,conv1_intw,2,"conv1.layout")
+    print(output[4][3][2])
     act1_after_relu=scale_then_clip(output,S1)
     output2=conv_kernel(act1_after_relu,conv2_intw,2)
+    gen_conv_kernel_layout(act1_after_relu,conv2_intw,2,"conv2.layout")
     act2_after_relu=scale_then_clip(output2,S2)
     after_reshape=np.reshape(act2_after_relu,[1,160])
     out=linear_kernel(after_reshape,fc_intw)
+    gen_linear_kernel_layout(after_reshape,fc_intw,"fc1.layout")
     TOT+=1
     print(out[0].argmax(),targets[id])
-    #break
+    break
     if out[0].argmax()==targets[id]:
         CNT+=1
     if TOT%20==0:
