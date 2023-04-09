@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import pickle
 import numpy as np
+import os
 
 class CNN(nn.Module):
     def __init__(self):
@@ -49,68 +50,51 @@ test_loader = DataLoader(
     shuffle=False
 )
 
-"""
-model = CNN().to(device)
-optim = torch.optim.Adam(model.parameters(), 1e-3)
-lossf = nn.CrossEntropyLoss()
-ANS=[]
-for epoch in range(3):
-    for step, (data, targets) in enumerate(train_loader):
-        if step<5:
-            ANS.append(data)
-        optim.zero_grad()
-        data = data.to(device)
-        targets = targets.to(device)
-        output = model(data)
-        loss = lossf(output, targets)
-        loss.backward()
-        optim.step()
-    print(f"{epoch} end!")
-loss = 0
-total = 0
-correct = 0
-with torch.no_grad():
-    for data, targets in test_loader:
-        data = data.to(device)
-        targets = targets.to(device)
-        output = model(data)
-        loss += lossf(output, targets)
-        correct += (output.argmax(1) == targets).sum()
-        total += data.size(0)
-loss = loss.item()/len(test_loader)
-acc = correct.item()/total
-print(acc)
-torch.save(model.state_dict(),"ck.pt")
-"""
+if not os.path.exists("ck.pt"):
+    model = CNN().to(device)
+    optim = torch.optim.Adam(model.parameters(), 1e-3)
+    lossf = nn.CrossEntropyLoss()
+    ANS=[]
+    for epoch in range(3):
+        for step, (data, targets) in enumerate(train_loader):
+            if step<5:
+                ANS.append(data)
+            optim.zero_grad()
+            data = data.to(device)
+            targets = targets.to(device)
+            output = model(data)
+            loss = lossf(output, targets)
+            loss.backward()
+            optim.step()
+        print(f"{epoch} end!")
+    loss = 0
+    total = 0
+    correct = 0
+    with torch.no_grad():
+        for data, targets in test_loader:
+            data = data.to(device)
+            targets = targets.to(device)
+            output = model(data)
+            loss += lossf(output, targets)
+            correct += (output.argmax(1) == targets).sum()
+            total += data.size(0)
+    loss = loss.item()/len(test_loader)
+    acc = correct.item()/total
+    print(acc)
+    torch.save(model.state_dict(),"ck.pt")
+
 
 
 model=CNN()
 model.load_state_dict(torch.load("ck.pt"))
-
 model.qconfig = torch.quantization.get_default_qconfig('qnnpack')
-
 model_fp32_prepared = torch.quantization.prepare(model)
-
-
-total = 0
-correct = 0
-
-
 input_fp32=pickle.load(open("1.pic",'rb'))
-
-
 model_fp32_prepared(input_fp32)
-
 model_int8 = torch.quantization.convert(model_fp32_prepared)
-
 uint8_np_ndarray = torch.int_repr(model_int8.conv1.weight()).numpy()
-
-
 IMAGE_WIDTH=28
-
 LAYER2_WIDTH=4
-
-
 conv1_intw=torch.int_repr(model_int8.conv1.weight()).numpy()
 conv2_intw=torch.int_repr(model_int8.conv2.weight()).numpy()
 fc_intw=torch.int_repr(model_int8.fc.weight()).numpy()
@@ -164,7 +148,7 @@ def linear_kernel(data,l_w):
             for _in in range(DIM):
                 output[b][out]+=data[b][_in]*l_w[_in][out]
     return output
-    
+
 def scale_then_clip(data,s):
     act_after_scale=np.floor(data/s)
     act_after_relu=np.clip(act_after_scale,0,63)
@@ -192,20 +176,14 @@ def gen_conv_kernel_layout(data,conv_w,STRIDE,file):
     OUTPUT_C,INPUT_C,K,_=conv_w.shape
     C,IMAGE_WIDTH,_=data.shape
     LAYER_WIDTH= (IMAGE_WIDTH-K+1)//STRIDE
-    output=np.zeros((OUTPUT_C,LAYER_WIDTH,LAYER_WIDTH))
-    IDX=-1
     for output_c in range(OUTPUT_C):
         for x in range(LAYER_WIDTH):
             for y in range(LAYER_WIDTH):
-                IDX+=1
                 for input_c in range(INPUT_C):
                     for p in range(K):
                         for q in range(K):
-                            
                             dt_idx= input_c*IMAGE_WIDTH*IMAGE_WIDTH+  (x*STRIDE+p)*IMAGE_WIDTH+y*STRIDE+q
                             conv_idx=output_c*INPUT_C*K*K+input_c*K*K+p*K+q 
-                            if IDX==130:
-                                print(data[input_c][x*STRIDE+p][y*STRIDE+q],conv_w[output_c][input_c][p][q],"dt idx:",dt_idx,"conv idx",conv_idx)
                             fi.write(dt_idx.to_bytes(4,'little',signed=True))
                             fi.write(conv_idx.to_bytes(4,'little',signed=True))
     return
@@ -237,7 +215,9 @@ for id in range(len(data)):
     after_reshape=np.reshape(act2_after_relu,[1,160])
     out=linear_kernel(after_reshape,fc_intw)
     gen_linear_kernel_layout(after_reshape,fc_intw,"fc1.layout")
+    print(out)
+    break
     if out[0].argmax()==targets[id]:
         CNT+=1
-    if TOT%20==0:
-        print(CNT/TOT*100,TOT)
+    if TOT%100==99:
+        print(f"ACC: {CNT/TOT*100} Tested on: {TOT}")

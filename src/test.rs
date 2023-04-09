@@ -6,16 +6,15 @@ use halo2_proofs::{
 };
 use std::marker::PhantomData;
 mod table;
-use std::fs::File;
-use std::io::{BufReader, Read};
-use table::*;
 use halo2_proofs::{
     circuit::floor_planner::V1,
     dev::{FailureLocation, MockProver, VerifyFailure},
     pasta::Fp,
     plonk::{Any, Circuit},
 };
-
+use std::fs::File;
+use std::io::{BufReader, Read};
+use table::*;
 
 #[derive(Clone, Debug)]
 struct LinearConfig<F: FieldExt> {
@@ -172,13 +171,6 @@ impl<F: FieldExt> NonLinearConfig<F> {
     }
 }
 
-
-
-#[derive(Default)]
-struct MyCircuit<F: FieldExt> {
-    _marker: PhantomData<F>,
-}
-
 #[derive(Clone, Debug)]
 struct CircuitConfig<F: FieldExt> {
     /// For this chip, we will use two advice columns to implement our instructions.
@@ -188,7 +180,6 @@ struct CircuitConfig<F: FieldExt> {
     nonlinear_config: NonLinearConfig<F>,
     linear_config: LinearConfig<F>,
 }
-
 
 fn construct_conv_layer<
     F: FieldExt,
@@ -212,7 +203,7 @@ fn construct_conv_layer<
         let (cell, ans) = config
             .linear_config
             .assign_linear::<image_size, conv1_size, layout1_size>(
-                layouter.namespace(||"conv1"),
+                layouter.namespace(|| "conv1"),
                 dt_layout,
                 w_layout,
                 dt,
@@ -226,27 +217,29 @@ fn construct_conv_layer<
     output1
 }
 
-fn construct_relu_layer<
-    F: FieldExt,
-    const outputsize: usize
->(
+fn construct_relu_layer<F: FieldExt, const outputsize: usize>(
     config: CircuitConfig<F>,
     mut layouter: impl Layouter<F>,
     output1: [i32; outputsize],
-)-> [i32; outputsize]
-{
+) -> [i32; outputsize] {
     const A: i32 = 1;
     const B: i32 = 1024;
-    let mut output2=[0;outputsize];
+    let mut output2 = [0; outputsize];
     for i in 0..outputsize {
         output2[i] = relu(output1[i] * A / B);
         config.nonlinear_config.assign_lookup(
-            layouter.namespace(||"relu1"),
+            layouter.namespace(|| "relu1"),
             convert_to_Value(output1[i]),
             convert_to_Value(output2[i]),
-        );   
+        );
     }
     output2
+}
+
+
+struct MyCircuit<F: FieldExt> {
+    dt: [i32; 784],
+    _marker: PhantomData<F>,
 }
 
 impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
@@ -254,7 +247,10 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
     type FloorPlanner = V1;
 
     fn without_witnesses(&self) -> Self {
-        Self::default()
+        Self {
+            dt: [0; 784],
+            _marker: PhantomData,
+        }
     }
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
@@ -262,12 +258,11 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
         for i in 0..200 {
             advice.push(meta.advice_column());
         }
-        let advice: [Column<Advice>;200] = advice.try_into().unwrap();
+        let advice: [Column<Advice>; 200] = advice.try_into().unwrap();
         for i in 0..200 {
             meta.enable_equality(advice[i]);
         }
-        let nonlinear_config =
-            NonLinearConfig::<F>::configure(meta, advice[0], advice[1]);
+        let nonlinear_config = NonLinearConfig::<F>::configure(meta, advice[0], advice[1]);
         let linear_config = LinearConfig::<F>::configure_linear(meta, advice);
         Self::Config {
             nonlinear_config,
@@ -290,24 +285,19 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
         const C2_OUTPUT_SIZE: usize = 4;
         const image_size: usize = IMAGE_SIZE * IMAGE_SIZE;
         const conv1_size: usize = 1 * C1_CHANNEL * K_SIZE * K_SIZE;
-        const conv2_size: usize= C2_CHANNEL* C1_CHANNEL * K_SIZE * K_SIZE;
-        const fc1_size:usize= C2_CHANNEL* C2_OUTPUT_SIZE* C2_OUTPUT_SIZE * 10;
+        const conv2_size: usize = C2_CHANNEL * C1_CHANNEL * K_SIZE * K_SIZE;
+        const fc1_size: usize = C2_CHANNEL * C2_OUTPUT_SIZE * C2_OUTPUT_SIZE * 10;
         const layer1_compute_size: usize = 1 * K_SIZE * K_SIZE;
         const layer2_compute_size: usize = C1_CHANNEL * K_SIZE * K_SIZE;
-        const layer3_compute_size: usize = C2_CHANNEL* C2_OUTPUT_SIZE* C2_OUTPUT_SIZE;
+        const layer3_compute_size: usize = C2_CHANNEL * C2_OUTPUT_SIZE * C2_OUTPUT_SIZE;
         const STEP1: usize = C1_CHANNEL * C1_OUTPUT_SIZE * C1_OUTPUT_SIZE;
         const STEP2: usize = C2_CHANNEL * C2_OUTPUT_SIZE * C2_OUTPUT_SIZE;
         const STEP3: usize = 10;
 
-        const layout1_size: usize =
-            2 * K_SIZE * K_SIZE * 1 * STEP1;
-        const layout2_size: usize =
-            2 * K_SIZE * K_SIZE * C1_CHANNEL * STEP2;
-        const layout3_size: usize =
-            2 * C2_CHANNEL* C2_OUTPUT_SIZE* C2_OUTPUT_SIZE * 10;
+        const layout1_size: usize = 2 * K_SIZE * K_SIZE * 1 * STEP1;
+        const layout2_size: usize = 2 * K_SIZE * K_SIZE * C1_CHANNEL * STEP2;
+        const layout3_size: usize = 2 * C2_CHANNEL * C2_OUTPUT_SIZE * C2_OUTPUT_SIZE * 10;
 
-
-        let dt = read_int32::<image_size>("img.dat");
         let output1: [i32; STEP1] = construct_conv_layer::<
             F,
             STEP1,
@@ -315,32 +305,39 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
             conv1_size,
             layout1_size,
             layer1_compute_size,
-        >(config.clone(), layouter.namespace(||"conv1"),"conv1.layout", "conv1.dat", dt); 
-        let output1: [i32; STEP1] = construct_relu_layer::<
-            F,
-            STEP1
-        >(config.clone(), layouter.namespace(|| "relu1"), output1);
-        let output2: [i32; STEP2] = construct_conv_layer::<
-            F,
-            STEP2,
-            STEP1,
-            conv2_size,
-            layout2_size,
-            layer2_compute_size,
-        >(config.clone(), layouter.namespace(||"conv2"),"conv2.layout", "conv2.dat", output1);
-        let output2: [i32; STEP2] = construct_relu_layer::<
-            F,
-            STEP2
-        >(config.clone(), layouter.namespace(|| "relu2"), output2);
-        let output3: [i32; STEP3] = construct_conv_layer::<
-            F,
-            STEP3,
-            STEP2,
-            fc1_size,
-            layout3_size,
-            layer3_compute_size,
-        >(config.clone(), layouter.namespace(||"fc1"),"fc1.layout", "fc1.dat", output2);
-        println!("{} {} {} {}",output3[0],output3[2],output3[3],output3[7]);
+        >(
+            config.clone(),
+            layouter.namespace(|| "conv1"),
+            "conv1.layout",
+            "conv1.dat",
+            self.dt,
+        );
+        let output1: [i32; STEP1] = construct_relu_layer::<F, STEP1>(
+            config.clone(),
+            layouter.namespace(|| "relu1"),
+            output1,
+        );
+        let output2: [i32; STEP2] =
+            construct_conv_layer::<F, STEP2, STEP1, conv2_size, layout2_size, layer2_compute_size>(
+                config.clone(),
+                layouter.namespace(|| "conv2"),
+                "conv2.layout",
+                "conv2.dat",
+                output1,
+            );
+        let output2: [i32; STEP2] = construct_relu_layer::<F, STEP2>(
+            config.clone(),
+            layouter.namespace(|| "relu2"),
+            output2,
+        );
+        let output3: [i32; STEP3] =
+            construct_conv_layer::<F, STEP3, STEP2, fc1_size, layout3_size, layer3_compute_size>(
+                config.clone(),
+                layouter.namespace(|| "fc1"),
+                "fc1.layout",
+                "fc1.dat",
+                output2,
+            );
         
         Ok(())
     }
@@ -379,7 +376,11 @@ fn read_layout<const layout_size: usize>(
 
 fn main() {
     let k = 18;
-    let circuit = MyCircuit::<Fp>{ _marker: PhantomData };
+    let dt = read_int32::<784usize>("img.dat");
+    let circuit = MyCircuit::<Fp> {
+        dt: dt,
+        _marker: PhantomData,
+    };
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     prover.assert_satisfied();
 }
