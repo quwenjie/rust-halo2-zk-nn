@@ -241,16 +241,8 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
         const conv1_size: usize = 1 * C1_CHANNEL * K_SIZE * K_SIZE;
         const layout1_size: usize = K_SIZE * K_SIZE * C1_CHANNEL * C1_OUTPUT_SIZE * C1_OUTPUT_SIZE;
         const layer1_compute_size: usize = 1 * K_SIZE * K_SIZE;
-        let layout_data = read_int32::<{ layout1_size * 2 }>("conv1.layout");
-        let mut dt_layout = [0 as usize; layout1_size];
-        let mut w_layout = [0 as usize; layout1_size];
-        for i in 0..layout1_size * 2 {
-            if i % 2 == 0 {
-                dt_layout[i / 2] = layout_data[i] as usize;
-            } else {
-                w_layout[i / 2] = layout_data[i] as usize;
-            }
-        }
+
+        let (dt_layout,w_layout)=read_layout::<{ layout1_size * 2 }>("conv1.layout");
         let dt = read_int32::<image_size>("img.dat");
         let conv1 = read_int32::<conv1_size>("conv1.dat");
         const STEP1: usize = 5 * 12 * 12;
@@ -260,7 +252,7 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
         for i in 0..STEP1 {
             let (cell, ans) = config
                 .linear_config
-                .assign_array::<{ image_size }, { conv1_size }, layout1_size>(
+                .assign_array::<{ image_size }, { conv1_size }, {layout1_size * 2}>(
                     layouter.namespace(|| "linear lookup place"),
                     dt_layout,
                     w_layout,
@@ -296,6 +288,19 @@ fn read_int32<const count: usize>(filename: &str) -> [i32; count] {
         panic!("Expected a Vec of length {} but it was {}", count, v.len())
     });
     ret_array
+}
+fn read_layout<const layout_size: usize>(filename: &str) -> ([usize;layout_size],[usize;layout_size]) {
+    let layout_data = read_int32::<layout_size>(filename);
+    let mut dt_layout = [0; layout_size];
+    let mut w_layout = [0; layout_size];
+    for i in 0..layout_size /2 {
+            if i % 2 == 0 {
+                dt_layout[i / 2] = layout_data[i] as usize;
+            } else {
+                w_layout[i / 2] = layout_data[i] as usize;
+            }
+        }
+    (dt_layout,w_layout)
 }
 fn main() {
     let k = 18;
