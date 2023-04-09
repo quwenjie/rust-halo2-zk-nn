@@ -1,6 +1,6 @@
 use halo2_proofs::{
     arithmetic::FieldExt,
-    circuit::{AssignedCell, Layouter, Value},
+    circuit::{AssignedCell, Cell, Layouter, Value},
     plonk::{Advice, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Selector},
     poly::Rotation,
 };
@@ -10,6 +10,7 @@ use secp256k1::ffi::SECP256K1_SER_UNCOMPRESSED;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use table::*;
+
 /// This helper checks that the value witnessed in a given cell is within a given range.
 /// Depending on the range, this helper uses either a range-check expression (for small ranges),
 /// or a lookup (for large ranges).
@@ -39,14 +40,6 @@ struct RangeCheckConfig<F: FieldExt, const LOOKUP_RANGE: usize> {
     table: RangeTableConfig<F, LOOKUP_RANGE>,
 }
 
-fn convert_to_Value<F: FieldExt>(v: i32) -> Value<Assigned<F>> {
-    if v >= 0 {
-        Value::known(F::from(v as u64).into())
-    } else {
-        let negv = -v;
-        Value::known(F::from(negv as u64).neg().into())
-    }
-}
 impl<F: FieldExt> LinearConfig<F> {
     fn configure_linear(meta: &mut ConstraintSystem<F>, advice: [Column<Advice>; 200]) -> Self {
         for column in &advice {
@@ -93,7 +86,7 @@ impl<F: FieldExt> LinearConfig<F> {
         weight: [i32; weight_count],
         start: usize,
         end: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<(AssignedCell<Assigned<F>, F>, i32), Error> {
         layouter.assign_region(
             || "Assign value for lookup range check",
             |mut region| {
@@ -134,16 +127,15 @@ impl<F: FieldExt> LinearConfig<F> {
                         || convert_to_Value(0),
                     );
                 }
-                region.assign_advice(
+                let out_cell = region.assign_advice(
                     || "value",
                     self.advice[150],
                     offset,
                     || convert_to_Value(ans),
-                );
-                Ok(())
+                )?;
+                Ok((out_cell, ans))
             },
-        );
-        Ok(())
+        )
     }
 }
 impl<F: FieldExt, const LOOKUP_RANGE: usize> RangeCheckConfig<F, LOOKUP_RANGE> {
@@ -177,34 +169,20 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> RangeCheckConfig<F, LOOKUP_RANGE> {
         mut layouter: impl Layouter<F>,
         value: Value<Assigned<F>>,
         value2: Value<Assigned<F>>,
-        enable: bool,
     ) -> Result<RangeConstrained<F, LOOKUP_RANGE>, Error> {
         let offset: usize = 0;
-        if enable {
-            layouter.assign_region(
-                || "Assign value for lookup range check",
-                |mut region| {
-                    // Enable q_lookup
-                    self.q_lookup.enable(&mut region, offset)?;
-                    // Assign value
-                    region.assign_advice(|| "value", self.col1, offset, || value);
-                    region
-                        .assign_advice(|| "value2", self.col2, offset, || value2)
-                        .map(RangeConstrained)
-                },
-            )
-        } else {
-            layouter.assign_region(
-                || "Assign value for lookup range check",
-                |mut region| {
-                    // Assign value
-                    region.assign_advice(|| "value", self.col1, offset, || value);
-                    region
-                        .assign_advice(|| "value2", self.col2, offset, || value2)
-                        .map(RangeConstrained)
-                },
-            )
-        }
+        layouter.assign_region(
+            || "Assign value for lookup range check",
+            |mut region| {
+                // Enable q_lookup
+                self.q_lookup.enable(&mut region, offset)?;
+                // Assign value
+                region.assign_advice(|| "value", self.col1, offset, || value);
+                region
+                    .assign_advice(|| "value2", self.col2, offset, || value2)
+                    .map(RangeConstrained)
+            },
+        )
     }
 }
 
@@ -250,6 +228,9 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
             advice.push(meta.advice_column());
         }
         let advice = Demo(advice);
+        for i in 0..200 {
+            meta.enable_equality(advice[i]);
+        }
         let nonlinear_config =
             RangeCheckConfig::<F, LOOKUP_RANGE>::configure(meta, advice[0], advice[1]);
         let linear_config = LinearConfig::<F>::configure_linear(meta, advice);
@@ -266,20 +247,6 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
         config.nonlinear_config.table.load(&mut layouter)?;
-        /*
-        config.nonlinear_config.assign_lookup(
-            layouter.namespace(|| "Assign lookup value map"),
-            self.a_value,
-            self.b_value,
-            true,
-        )?;
-        config.nonlinear_config.assign_lookup(
-            layouter.namespace(|| "Assign lookup value map"),
-            self.c_value,
-            self.d_value,
-            true,
-        )?;
-        */
         const IMAGE_SIZE: usize = 28;
         const K_SIZE: usize = 5;
         const C1_CHANNEL: usize = 5;
@@ -300,11 +267,12 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
         }
         let dt = read_int32::<image_size>("img.dat");
         let conv1 = read_int32::<conv1_size>("conv1.dat");
-        let mut output = [0; 5 * 12 * 12];
-
         const STEP1: usize = 5 * 12 * 12;
+        let mut output1 = [0; STEP1];
+        let mut output2 = [0; STEP1];
+
         for i in 0..STEP1 {
-            config
+            let (cell, ans) = config
                 .linear_config
                 .assign_array::<{ image_size }, { conv1_size }, layout1_size>(
                     layouter.namespace(|| "linear lookup place"),
@@ -312,9 +280,19 @@ impl<F: FieldExt, const LOOKUP_RANGE: usize> Circuit<F> for MyCircuit<F, LOOKUP_
                     w_layout,
                     dt,
                     conv1,
-                    i * 25,
-                    i * 25 + 25,
-                );
+                    i * layer1_compute_size,
+                    i * layer1_compute_size + layer1_compute_size,
+                )
+                .unwrap();
+            output1[i] = ans;
+        }
+        for i in 0..STEP1 {
+            output2[i] = relu(output1[i] / 1024);
+            config.nonlinear_config.assign_lookup(
+                layouter.namespace(|| "Assign lookup value map"),
+                convert_to_Value(output1[i]),
+                convert_to_Value(output2[i]),
+            )?;
         }
         Ok(())
     }
@@ -339,8 +317,6 @@ fn main() {
     let circuit = MyCircuit::<Fp, LOOKUP_RANGE> {
         a_value: Value::known(Fp::from(38001).into()),
     };
-    //println!("{}",Value::known(Fp::from(38001).into()).evaluate());
-
     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
     prover.assert_satisfied();
 }

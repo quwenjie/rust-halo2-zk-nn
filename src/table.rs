@@ -3,9 +3,29 @@ use std::marker::PhantomData;
 use halo2_proofs::{
     arithmetic::FieldExt,
     circuit::{Layouter, Value},
-    plonk::{ConstraintSystem, Error, TableColumn},
+    plonk::{ConstraintSystem, Error, TableColumn, Assigned},
 };
 
+pub fn convert_to_Value<F: FieldExt>(v: i32) -> Value<Assigned<F>> {
+    if v >= 0 {
+        Value::known(F::from(v as u64).into())
+    } else {
+        let negv = -v;
+        Value::known(F::from(negv as u64).neg().into())
+    }
+}
+
+pub fn relu(input: i32)->i32
+{
+    if input<0
+    {
+        0
+    }
+    else 
+    {
+        input
+    }
+}
 /// A lookup table of values from 0..RANGE.
 #[derive(Debug, Clone)]
 pub(super) struct RangeTableConfig<F: FieldExt, const RANGE: usize> {
@@ -30,37 +50,23 @@ impl<F: FieldExt, const RANGE: usize> RangeTableConfig<F, RANGE> {
         layouter.assign_table(
             || "load range-check table",
             |mut table| {
-                
-                table.assign_cell(
-                    || "num_bits",
-                    self.lookup1,
-                    0,
-                    || Value::known(F::from(0 as u64)),
-                )?;
-                table.assign_cell(
-                    || "num_bits",
-                    self.lookup2,
-                    0,
-                    || Value::known(F::from(0 as u64)),
-                )?;
-                let mut offset = 1;
-                for value in 1..1<<RANGE {
-                    let v2=value/2;
+                let mut offset = 0;
+                for value in -65536..65535 {
+                    let v2=relu(value/1024);
                     table.assign_cell(
                         || "num_bits",
                         self.lookup1,
                         offset,
-                        || Value::known(F::from(value as u64)),
+                        || convert_to_Value(value),
                     )?;
                     table.assign_cell(
                         || "num_bits",
                         self.lookup2,
                         offset,
-                        || Value::known(F::from(v2 as u64)),
+                        || convert_to_Value(v2),
                     )?;
                     offset += 1;
                 }
-
                 Ok(())
             },
         )
