@@ -132,16 +132,16 @@ def conv_kernel(data,conv_w,STRIDE):
     C,IMAGE_WIDTH,_=data.shape
     LAYER_WIDTH= (IMAGE_WIDTH-K+1)//STRIDE
     output=np.zeros((OUTPUT_C,LAYER_WIDTH,LAYER_WIDTH))
-
     for output_c in range(OUTPUT_C):
         for x in range(LAYER_WIDTH):
             for y in range(LAYER_WIDTH):
-
                 for input_c in range(INPUT_C):
                     for p in range(K):
                         for q in range(K):
                             output[output_c][x][y]+=data[input_c][x*STRIDE+p][y*STRIDE+q]*conv_w[output_c][input_c][p][q]
     return output
+
+    
 def linear_kernel(data,l_w):
     BATCH, DIM=data.shape
     DIM, OUT=l_w.shape
