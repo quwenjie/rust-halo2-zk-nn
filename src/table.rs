@@ -49,7 +49,7 @@ impl<F: FieldExt> NonLinearTableConfig<F> {
 
     pub(super) fn load(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
         layouter.assign_table(
-            || "load range-check table",
+            || "load non linear table",
             |mut table| {
                 let mut offset = 0;
                 for value in -65536..65535 {
@@ -96,7 +96,7 @@ impl<F: FieldExt> SignTableConfig<F> {
 
     pub(super) fn load(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
         layouter.assign_table(
-            || "load range-check table",
+            || "load sign table",
             |mut table| {
                 let mut offset = 0;
                 for value in -65536..65535 {
@@ -106,7 +106,7 @@ impl<F: FieldExt> SignTableConfig<F> {
                         offset,
                         || convert_to_Value(value),
                     )?;
-                    if value>=0
+                    if value>0
                     {
                         table.assign_cell(
                         || "num_bits",

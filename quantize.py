@@ -217,9 +217,11 @@ for id in range(len(data)):
     gen_linear_kernel_layout(after_reshape,fc_intw,"fc1.layout")
     fi.write(out[0].argmax().item().to_bytes(4,'little',signed=True))
     fi.write(targets[id].item().to_bytes(4,'little',signed=True))
+    
     if out[0].argmax()==targets[id]:
         CNT+=1
     if TOT%100==99:
         print(f"ACC: {CNT/TOT*100} Tested on: {TOT}")
         break
+    TOT+=1
 fi.close()

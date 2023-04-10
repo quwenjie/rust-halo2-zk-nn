@@ -1,10 +1,11 @@
 use halo2_proofs::{
     arithmetic::FieldExt,
     circuit::{AssignedCell, Cell, Layouter, Value},
-    plonk::{Advice, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Selector},
+    plonk::{Advice, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Selector,Instance},
     poly::Rotation,
 };
-use std::marker::PhantomData;
+use std::time::Instant;
+use std::{cmp::min, marker::PhantomData};
 mod table;
 use halo2_proofs::{
     circuit::floor_planner::V1,
@@ -20,6 +21,13 @@ use table::*;
 struct LinearConfig<F: FieldExt> {
     advice: [Column<Advice>; 200],
     s_linear: Selector,
+    _marker: PhantomData<F>,
+}
+
+#[derive(Clone, Debug)]
+struct MinusConfig<F: FieldExt> {
+    advice: [Column<Advice>; 200],
+    s_minus: Selector,
     _marker: PhantomData<F>,
 }
 
@@ -108,6 +116,59 @@ impl<F: FieldExt> LinearConfig<F> {
                     ans += wt * dt;
                 }
                 for i in end - start..180 {
+                    region.assign_advice(
+                        || "value",
+                        self.advice[i],
+                        offset,
+                        || convert_to_Value(0),
+                    );
+                    region.assign_advice(
+                        || "value2",
+                        self.advice[i],
+                        offset + 1,
+                        || convert_to_Value(0),
+                    );
+                }
+                let out_cell = region.assign_advice(
+                    || "value",
+                    self.advice[180],
+                    offset,
+                    || convert_to_Value(ans),
+                )?;
+                Ok((out_cell, ans))
+            },
+        )
+    }
+
+    fn assign_dot<const count: usize>(
+        &self,
+        mut layouter: impl Layouter<F>,
+        a: [i32; count],
+        b: [i32; count],
+    ) -> Result<(AssignedCell<Assigned<F>, F>, i32), Error> {
+        layouter.assign_region(
+            || "Assign value for lookup range check",
+            |mut region| {
+                let offset = 0;
+                self.s_linear.enable(&mut region, offset)?;
+                // Assign value
+                let mut ans = 0;
+                for i in 0..count {
+                    region.assign_advice(
+                        || "value",
+                        self.advice[i],
+                        offset,
+                        || convert_to_Value(a[i]),
+                    );
+                    region.assign_advice(
+                        || "value2",
+                        self.advice[i],
+                        offset + 1,
+                        || convert_to_Value(b[i]),
+                    );
+                    ans += a[i] * b[i];
+                }
+                for i in count..180 {
                     region.assign_advice(
                         || "value",
                         self.advice[i],
@@ -234,7 +295,8 @@ struct CircuitConfig<F: FieldExt> {
     advice: [Column<Advice>; 200],
     nonlinear_config: NonLinearConfig<F>,
     linear_config: LinearConfig<F>,
-    sign_config: SignConfig<F>
+    sign_config: SignConfig<F>,
+    instance: Column<Instance>
 }
 
 fn construct_conv_layer<
@@ -272,16 +334,12 @@ fn construct_conv_layer<
     }
     output1
 }
-fn sign(x:i32)->i32
-{
-    if x>=0
-    {
+fn sign(x: i32) -> i32 {
+    if x > 0 {
         1
-    }
-    else {
+    } else {
         0
     }
-
 }
 fn construct_relu_layer<F: FieldExt, const outputsize: usize>(
     config: CircuitConfig<F>,
@@ -309,7 +367,7 @@ fn construct_sign_layer<F: FieldExt, const outputsize: usize>(
 ) -> [i32; outputsize] {
     let mut output2 = [0; outputsize];
     for i in 0..outputsize {
-        output2[i] = sign(output1[i] );
+        output2[i] = sign(output1[i]);
         config.sign_config.assign_lookup(
             layouter.namespace(|| "sign1"),
             convert_to_Value(output1[i]),
@@ -321,7 +379,7 @@ fn construct_sign_layer<F: FieldExt, const outputsize: usize>(
 
 struct MyCircuit<F: FieldExt> {
     dt: [i32; 784],
-    label: i32,
+    label: [i32; 10],
     _marker: PhantomData<F>,
 }
 
@@ -332,13 +390,14 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
     fn without_witnesses(&self) -> Self {
         Self {
             dt: [0; 784],
-            label: -1,
+            label: [0; 10],
             _marker: PhantomData,
         }
     }
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
         let mut advice = Vec::new();
+        let instance=meta.instance_column();
         for i in 0..200 {
             advice.push(meta.advice_column());
         }
@@ -354,6 +413,7 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
             nonlinear_config: nonlinear_config,
             linear_config: linear_config,
             sign_config: sign_config,
+            instance: instance
         }
     }
 
@@ -363,6 +423,7 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
         config.nonlinear_config.table.load(&mut layouter)?;
+        config.sign_config.table.load(&mut layouter);
         const IMAGE_SIZE: usize = 28;
         const K_SIZE: usize = 5;
         const C1_CHANNEL: usize = 5;
@@ -416,7 +477,7 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
             layouter.namespace(|| "relu2"),
             output2,
         );
-        let output3: [i32; STEP3] =
+        let logits: [i32; STEP3] =
             construct_conv_layer::<F, STEP3, STEP2, fc1_size, layout3_size, layer3_compute_size>(
                 config.clone(),
                 layouter.namespace(|| "fc1"),
@@ -424,7 +485,22 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
                 "fc1.dat",
                 output2,
             );
-        
+        let (dot_cell, target_logit) = config
+            .linear_config
+            .assign_dot::<STEP3>(layouter.namespace(|| "dot1"), logits, self.label)
+            .unwrap();
+        let logits_minused: [i32; STEP3] = minus_gate(logits, target_logit);
+        let logits_minus_sign: [i32; STEP3] = construct_sign_layer(
+            config.clone(),
+            layouter.namespace(|| "sign1"),
+            logits_minused,
+        );
+        let mask = [1; STEP3];
+        let (sign_sum_cell, sign_sum) = config
+            .linear_config
+            .assign_dot::<STEP3>(layouter.namespace(|| "dot2"), logits_minus_sign, mask)
+            .unwrap();
+        layouter.constrain_instance(sign_sum_cell.cell(), config.instance, 0);
         Ok(())
     }
 }
@@ -460,19 +536,40 @@ fn read_layout<const layout_size: usize>(
     (dt_layout, w_layout)
 }
 
+fn minus_gate<const count: usize>(a: [i32; count], b: i32) -> [i32; count] {
+    let mut c = [0; count];
+    for i in 0..count {
+        c[i] = a[i] - b;
+    }
+    return c;
+}
+
 fn main() {
     let k = 18;
-    let labels = read_int32::<100usize>("results.dat");
-    for i in 0..100
-    {
+    let tmp = read_int32::<200usize>("results.dat");
+    let mut predict = [0usize; 100];
+    let mut label = [0usize; 100];
+    for i in 0..100 {
+        predict[i] = tmp[2 * i] as usize;
+        label[i] = tmp[2 * i + 1] as usize;
+    }
+
+    for i in 0..100 {
         let dt = read_int32::<784usize>(&format!("images/img{}.dat", i));
+        let mut onehot: [i32; 10] = [0; 10];
+        onehot[predict[i]] = 1;
         let circuit = MyCircuit::<Fp> {
             dt: dt,
-            label:labels[i], 
+            label: onehot,
             _marker: PhantomData,
         };
-        let prover = MockProver::run(k, &circuit, vec![]).unwrap();
+        let now = Instant::now();
+        let prover = MockProver::run(k, &circuit, vec![vec![Fp::from(0)]]).unwrap();
         prover.assert_satisfied();
-        println!("pass image {} ",i);
+        let elapsed_time = now.elapsed();
+        println!(
+            "pass image {} proved its predict:{} ground truth is {}, prove took time: {}",
+            i, predict[i], label[i], elapsed_time.as_secs()
+        );
     }
 }
