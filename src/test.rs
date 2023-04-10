@@ -1,7 +1,10 @@
 use halo2_proofs::{
     arithmetic::FieldExt,
     circuit::{AssignedCell, Cell, Layouter, Value},
-    plonk::{Advice, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Selector,Instance},
+    plonk::{
+        Advice, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Instance,
+        Selector,
+    },
     poly::Rotation,
 };
 use std::time::Instant;
@@ -67,7 +70,7 @@ impl<F: FieldExt> LinearConfig<F> {
                 })
             };
 
-            Constraints::with_selector(s_linear, [("range check", linear_gate_check(180, value))])
+            Constraints::with_selector(s_linear, [("linear gate", linear_gate_check(180, value))])
         });
 
         Self {
@@ -92,7 +95,7 @@ impl<F: FieldExt> LinearConfig<F> {
         end: usize,
     ) -> Result<(AssignedCell<Assigned<F>, F>, i32), Error> {
         layouter.assign_region(
-            || "Assign value for lookup range check",
+            || "Assign value for conv/linear operator check",
             |mut region| {
                 let offset = 0;
                 self.s_linear.enable(&mut region, offset)?;
@@ -147,7 +150,7 @@ impl<F: FieldExt> LinearConfig<F> {
         b: [i32; count],
     ) -> Result<(AssignedCell<Assigned<F>, F>, i32), Error> {
         layouter.assign_region(
-            || "Assign value for lookup range check",
+            || "Assign value for dot product check",
             |mut region| {
                 let offset = 0;
                 self.s_linear.enable(&mut region, offset)?;
@@ -227,7 +230,7 @@ impl<F: FieldExt> NonLinearConfig<F> {
     ) -> Result<(), Error> {
         let offset: usize = 0;
         layouter.assign_region(
-            || "Assign value for lookup range check",
+            || "Assign value for nonlinear lookup range check",
             |mut region| {
                 // Enable s_lookup
                 self.s_lookup.enable(&mut region, offset)?;
@@ -274,7 +277,7 @@ impl<F: FieldExt> SignConfig<F> {
     ) -> Result<(), Error> {
         let offset: usize = 0;
         layouter.assign_region(
-            || "Assign value for lookup range check",
+            || "Assign value for sign lookup range check",
             |mut region| {
                 // Enable s_lookup
                 self.s_lookup.enable(&mut region, offset)?;
@@ -296,7 +299,7 @@ struct CircuitConfig<F: FieldExt> {
     nonlinear_config: NonLinearConfig<F>,
     linear_config: LinearConfig<F>,
     sign_config: SignConfig<F>,
-    instance: Column<Instance>
+    instance: Column<Instance>,
 }
 
 fn construct_conv_layer<
@@ -397,7 +400,7 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
         let mut advice = Vec::new();
-        let instance=meta.instance_column();
+        let instance = meta.instance_column();
         for i in 0..200 {
             advice.push(meta.advice_column());
         }
@@ -413,7 +416,7 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
             nonlinear_config: nonlinear_config,
             linear_config: linear_config,
             sign_config: sign_config,
-            instance: instance
+            instance: instance,
         }
     }
 
@@ -546,15 +549,16 @@ fn minus_gate<const count: usize>(a: [i32; count], b: i32) -> [i32; count] {
 
 fn main() {
     let k = 18;
-    let tmp = read_int32::<200usize>("results.dat");
-    let mut predict = [0usize; 100];
-    let mut label = [0usize; 100];
-    for i in 0..100 {
+    const image_num: usize = 100;
+    let tmp = read_int32::<{ 2 * image_num }>("results.dat");
+    let mut predict = [0usize; image_num];
+    let mut label = [0usize; image_num];
+    for i in 0..image_num {
         predict[i] = tmp[2 * i] as usize;
         label[i] = tmp[2 * i + 1] as usize;
     }
 
-    for i in 0..100 {
+    for i in 0..image_num {
         let dt = read_int32::<784usize>(&format!("images/img{}.dat", i));
         let mut onehot: [i32; 10] = [0; 10];
         onehot[predict[i]] = 1;
@@ -569,7 +573,10 @@ fn main() {
         let elapsed_time = now.elapsed();
         println!(
             "pass image {} proved its predict:{} ground truth is {}, prove took time: {}",
-            i, predict[i], label[i], elapsed_time.as_secs()
+            i,
+            predict[i],
+            label[i],
+            elapsed_time.as_secs()
         );
     }
 }
