@@ -29,9 +29,12 @@ class CNN(nn.Module):
         return y
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#if not os.path.exists('./dataset'):
+#    os.mkdir('./dataset')
 train_file = datasets.MNIST(
     root='./dataset/',
     train=True,
+    download=True,
     transform=transforms.ToTensor()
 )
 train_loader = DataLoader(
@@ -41,6 +44,7 @@ train_loader = DataLoader(
 )
 test_file = datasets.MNIST(
     root='./dataset/',
+    download=True,
     train=False,
     transform=transforms.ToTensor()
 )
