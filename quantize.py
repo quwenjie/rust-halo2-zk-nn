@@ -221,7 +221,7 @@ for id in range(len(data)):
     if out[0].argmax()==targets[id]:
         CNT+=1
     if TOT%100==99:
-        print(f"ACC: {CNT/TOT*100} Tested on: {TOT}")
+        print(f"ACC: {CNT/(TOT+1)*100} Tested on: {TOT+1}")
         break
     TOT+=1
 fi.close()
