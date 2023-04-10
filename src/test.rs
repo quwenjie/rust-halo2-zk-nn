@@ -31,6 +31,14 @@ struct NonLinearConfig<F: FieldExt> {
     table: NonLinearTableConfig<F>,
 }
 
+#[derive(Debug, Clone)]
+struct SignConfig<F: FieldExt> {
+    s_lookup: Selector,
+    col1: Column<Advice>,
+    col2: Column<Advice>,
+    table: SignTableConfig<F>,
+}
+
 impl<F: FieldExt> LinearConfig<F> {
     fn configure_linear(meta: &mut ConstraintSystem<F>, advice: [Column<Advice>; 200]) -> Self {
         for column in &advice {
@@ -171,6 +179,53 @@ impl<F: FieldExt> NonLinearConfig<F> {
     }
 }
 
+impl<F: FieldExt> SignConfig<F> {
+    pub fn configure(
+        meta: &mut ConstraintSystem<F>,
+        col1: Column<Advice>,
+        col2: Column<Advice>,
+    ) -> Self {
+        let s_lookup = meta.complex_selector();
+        let table = SignTableConfig::configure(meta);
+        meta.lookup(|meta| {
+            let s_lookup = meta.query_selector(s_lookup);
+            let value1 = meta.query_advice(col1, Rotation::cur());
+            let value2 = meta.query_advice(col2, Rotation::cur());
+            vec![
+                (s_lookup.clone() * value1, table.lookup1),
+                (s_lookup * value2, table.lookup2),
+            ]
+        });
+
+        Self {
+            s_lookup: s_lookup,
+            col1: col1,
+            col2: col2,
+            table: table,
+        }
+    }
+
+    pub fn assign_lookup(
+        &self,
+        mut layouter: impl Layouter<F>,
+        value: Value<Assigned<F>>,
+        value2: Value<Assigned<F>>,
+    ) -> Result<(), Error> {
+        let offset: usize = 0;
+        layouter.assign_region(
+            || "Assign value for lookup range check",
+            |mut region| {
+                // Enable s_lookup
+                self.s_lookup.enable(&mut region, offset)?;
+                // Assign value
+                region.assign_advice(|| "value", self.col1, offset, || value);
+                region.assign_advice(|| "value2", self.col2, offset, || value2)
+            },
+        );
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CircuitConfig<F: FieldExt> {
     /// For this chip, we will use two advice columns to implement our instructions.
@@ -179,6 +234,7 @@ struct CircuitConfig<F: FieldExt> {
     advice: [Column<Advice>; 200],
     nonlinear_config: NonLinearConfig<F>,
     linear_config: LinearConfig<F>,
+    sign_config: SignConfig<F>
 }
 
 fn construct_conv_layer<
@@ -216,7 +272,17 @@ fn construct_conv_layer<
     }
     output1
 }
+fn sign(x:i32)->i32
+{
+    if x>=0
+    {
+        1
+    }
+    else {
+        0
+    }
 
+}
 fn construct_relu_layer<F: FieldExt, const outputsize: usize>(
     config: CircuitConfig<F>,
     mut layouter: impl Layouter<F>,
@@ -236,9 +302,26 @@ fn construct_relu_layer<F: FieldExt, const outputsize: usize>(
     output2
 }
 
+fn construct_sign_layer<F: FieldExt, const outputsize: usize>(
+    config: CircuitConfig<F>,
+    mut layouter: impl Layouter<F>,
+    output1: [i32; outputsize],
+) -> [i32; outputsize] {
+    let mut output2 = [0; outputsize];
+    for i in 0..outputsize {
+        output2[i] = sign(output1[i] );
+        config.sign_config.assign_lookup(
+            layouter.namespace(|| "sign1"),
+            convert_to_Value(output1[i]),
+            convert_to_Value(output2[i]),
+        );
+    }
+    output2
+}
 
 struct MyCircuit<F: FieldExt> {
     dt: [i32; 784],
+    label: i32,
     _marker: PhantomData<F>,
 }
 
@@ -249,6 +332,7 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
     fn without_witnesses(&self) -> Self {
         Self {
             dt: [0; 784],
+            label: -1,
             _marker: PhantomData,
         }
     }
@@ -264,10 +348,12 @@ impl<F: FieldExt> Circuit<F> for MyCircuit<F> {
         }
         let nonlinear_config = NonLinearConfig::<F>::configure(meta, advice[0], advice[1]);
         let linear_config = LinearConfig::<F>::configure_linear(meta, advice);
+        let sign_config = SignConfig::<F>::configure(meta, advice[0], advice[1]);
         Self::Config {
-            nonlinear_config,
-            linear_config,
-            advice,
+            advice: advice,
+            nonlinear_config: nonlinear_config,
+            linear_config: linear_config,
+            sign_config: sign_config,
         }
     }
 
@@ -376,11 +462,17 @@ fn read_layout<const layout_size: usize>(
 
 fn main() {
     let k = 18;
-    let dt = read_int32::<784usize>("img.dat");
-    let circuit = MyCircuit::<Fp> {
-        dt: dt,
-        _marker: PhantomData,
-    };
-    let prover = MockProver::run(k, &circuit, vec![]).unwrap();
-    prover.assert_satisfied();
+    let labels = read_int32::<100usize>("results.dat");
+    for i in 0..100
+    {
+        let dt = read_int32::<784usize>(&format!("images/img{}.dat", i));
+        let circuit = MyCircuit::<Fp> {
+            dt: dt,
+            label:labels[i], 
+            _marker: PhantomData,
+        };
+        let prover = MockProver::run(k, &circuit, vec![]).unwrap();
+        prover.assert_satisfied();
+        println!("pass image {} ",i);
+    }
 }

@@ -16,3 +16,4 @@ ck.pt
 *.pic
 *.layout
 *.txt
+/images/

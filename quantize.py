@@ -201,11 +201,11 @@ def gen_linear_kernel_layout(data,l_w,file):
                 fi.write(dt_idx.to_bytes(4,'little',signed=True))
                 fi.write(l_idx.to_bytes(4,'little',signed=True))
 
-
+fi=open("results.dat","wb")
 for id in range(len(data)):
     dt=data[id].numpy()
     dt=np.floor(dt*64)
-    save_img(dt,"img.dat")
+    save_img(dt,f"images/img{id}.dat")
     output=conv_kernel(dt,conv1_intw,2)
     gen_conv_kernel_layout(dt,conv1_intw,2,"conv1.layout")
     act1_after_relu=scale_then_clip(output,S1)
@@ -215,9 +215,11 @@ for id in range(len(data)):
     after_reshape=np.reshape(act2_after_relu,[1,160])
     out=linear_kernel(after_reshape,fc_intw)
     gen_linear_kernel_layout(after_reshape,fc_intw,"fc1.layout")
-    print(out)
-    break
+    fi.write(out[0].argmax().item().to_bytes(4,'little',signed=True))
+    fi.write(targets[id].item().to_bytes(4,'little',signed=True))
     if out[0].argmax()==targets[id]:
         CNT+=1
     if TOT%100==99:
         print(f"ACC: {CNT/TOT*100} Tested on: {TOT}")
+        break
+fi.close()
